@@ -16,6 +16,7 @@ License: MIT (see LICENSE for details)
 from __future__ import with_statement
 import inspect
 import logging
+import signal
 from aiohttp.wsgi import WSGIServerHttpProtocol
 import asyncio
 
@@ -584,6 +585,7 @@ class Bottle(object):
         self.config['catchall'] = catchall
         self.config['autojson'] = autojson
         self.initialized = False
+        self.init_lock = asyncio.Lock()
 
         #: A :class:`ResourceManager` for application files
         self.resources = ResourceManager()
@@ -955,10 +957,17 @@ class Bottle(object):
     def wsgi(self, environ, start_response):
         """ The bottle WSGI-interface. """
 
-        if not self.initialized:
-            print("triggering")
-            yield from self.trigger_hook('before_first_request')
-            self.initialized = True
+        if self.init_lock:
+            lock = self.init_lock
+            try:
+                yield from self.init_lock.acquire()
+                if not self.initialized:
+                    print("triggering")
+                    yield from self.trigger_hook('before_first_request')
+                    self.initialized = True
+                    self.init_lock = None
+            finally:
+                lock.release()
 
         try:
             request, response, result = yield from self._handle(environ)
@@ -2680,15 +2689,19 @@ class WSGIRefServer(ServerAdapter):
         srv = make_server(self.host, self.port, app, server_cls, handler_cls)
         srv.serve_forever()
 
+
 class AioHTTPServer(ServerAdapter):
     def run(self, app): # pragma: no cover
-
-        """Create a new server instance that is either threaded, or forks
-        or just processes one request after another.
-        """
-
         loop = asyncio.get_event_loop()
         asyncio.async(loop.create_server(lambda: WSGIServerHttpProtocol(app, readpayload=True), self.host, self.port))
+
+        def ask_exit(signame):
+            loop.stop()
+
+        for signame in ('SIGINT', 'SIGTERM'):
+            loop.add_signal_handler(getattr(signal, signame),
+                                    functools.partial(ask_exit, signame))
+
         loop.run_forever()
 
 
