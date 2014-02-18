@@ -8,13 +8,11 @@ except ImportError:
     from distutils.core import setup
 
 
-import bottle
-
 setup(name='Bottle-Async',
-      version=bottle.__version__,
+      version="0.13-dev",
       description='A fork of Bottle to add support for asyncio.',
-      long_description=bottle.__doc__,
-      author=bottle.__author__ + ", Don Brown",
+      long_description="",
+      author="Marcel Hellkamp, Don Brown",
       author_email='mrdon@twdata.org',
       url='https://github.com/mrdon/bottle',
       py_modules=['bottle'],
