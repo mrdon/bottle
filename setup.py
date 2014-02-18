@@ -21,7 +21,7 @@ setup(name='Bottle-Async',
       scripts=['bottle.py'],
       license='MIT',
       install_requires=[
-        'aiohttp>=0.6'
+        'aiohttp>=0.6.0'
       ],
       platforms = 'any',
       classifiers=['Development Status :: 4 - Beta',
