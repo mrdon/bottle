@@ -14,7 +14,10 @@ License: MIT (see LICENSE for details)
 """
 
 from __future__ import with_statement
+import inspect
 import logging
+from aiohttp.wsgi import WSGIServerHttpProtocol
+import asyncio
 
 __author__ = 'Marcel Hellkamp'
 __version__ = '0.13-dev'
@@ -28,7 +31,7 @@ if __name__ == '__main__':
     _opt = _cmd_parser.add_option
     _opt("--version", action="store_true", help="show version number.")
     _opt("-b", "--bind", metavar="ADDRESS", help="bind socket to ADDRESS.")
-    _opt("-s", "--server", default='wsgiref', help="use SERVER as backend.")
+    _opt("-s", "--server", default='aiohttp', help="use SERVER as backend.")
     _opt("-p", "--plugin", action="append", help="install additional plugin/s.")
     _opt("--debug", action="store_true", help="start server in debug mode.")
     _opt("--reload", action="store_true", help="auto-reload on file changes.")
@@ -580,6 +583,7 @@ class Bottle(object):
         self.config.meta_set('catchall', 'validate', bool)
         self.config['catchall'] = catchall
         self.config['autojson'] = autojson
+        self.initialized = False
 
         #: A :class:`ResourceManager` for application files
         self.resources = ResourceManager()
@@ -597,7 +601,7 @@ class Bottle(object):
     #: If true, most exceptions are caught and returned as :exc:`HTTPError`
     catchall = DictProperty('config', 'catchall')
 
-    __hook_names = 'before_request', 'after_request', 'app_reset', 'config'
+    __hook_names = 'before_first_request', 'before_request', 'after_request', 'app_reset', 'config'
     __hook_reversed = 'after_request'
 
     @cached_property
@@ -606,7 +610,8 @@ class Bottle(object):
 
     def add_hook(self, name, func):
         ''' Attach a callback to a hook. Three hooks are currently implemented:
-
+            before__first_request
+                Executed once before the first request.
             before_request
                 Executed once before each request. The request context is
                 available, but no routing has happened yet.
@@ -626,9 +631,15 @@ class Bottle(object):
             self._hooks[name].remove(func)
             return True
 
+    @asyncio.coroutine
     def trigger_hook(self, __name, *args, **kwargs):
         ''' Trigger a hook and return a list of results. '''
-        return [hook(*args, **kwargs) for hook in self._hooks[__name][:]]
+        results = []
+        for hook in self._hooks[__name][:]:
+            result = yield from call_maybe_yield(hook, *args, **kwargs)
+            results.append(result)
+
+        return results
 
     def hook(self, name):
         """ Return a decorator that attaches a callback to a hook. See
@@ -721,6 +732,7 @@ class Bottle(object):
         if removed: self.reset()
         return removed
 
+    @asyncio.coroutine
     def reset(self, route=None):
         ''' Reset all routes (force plugins to be re-applied) and clear all
             caches. If an ID or route object is given, only that specific route
@@ -731,7 +743,7 @@ class Bottle(object):
         for route in routes: route.reset()
         if DEBUG:
             for route in routes: route.prepare()
-        self.trigger_hook('app_reset')
+        yield from self.trigger_hook('app_reset')
 
     def close(self):
         ''' Close the application and all installed plugins. '''
@@ -830,6 +842,7 @@ class Bottle(object):
     def default_error_handler(self, request, response, res):
         return tob(template(ERROR_PAGE_TEMPLATE, e=res, request=request, response=response))
 
+    @asyncio.coroutine
     def _handle(self, environ):
         path = environ['bottle.raw_path'] = environ['PATH_INFO']
         if py3k:
@@ -843,20 +856,21 @@ class Bottle(object):
         try:
             environ['bottle.app'] = self
             try:
-                self.trigger_hook('before_request')
+                yield from self.trigger_hook('before_request')
                 route, args = self.router.match(environ)
                 environ['route.handle'] = route
                 environ['bottle.route'] = route
                 environ['route.url_args'] = args
-                return request, response, route.call(request, response, **args)
+                result = yield from call_maybe_yield(route.call, *[request, response], **args)
+                return request, response, result
             finally:
-                self.trigger_hook('after_request')
+                yield from self.trigger_hook('after_request')
 
         except HTTPResponse:
             return request, response, _e()
         except RouteReset:
             route.reset()
-            return self._handle(environ)
+            return (yield from self._handle(environ))
         except (KeyboardInterrupt, SystemExit, MemoryError):
             raise
         except Exception:
@@ -932,15 +946,22 @@ class Bottle(object):
             new_iter = imap(encoder, itertools.chain([first], iout))
         else:
             msg = 'Unsupported response type: %s' % type(first)
-            return self._cast(HTTPError(500, msg))
+            return self._cast(request, response, HTTPError(500, msg))
         if hasattr(out, 'close'):
             new_iter = _closeiter(new_iter, out.close)
         return new_iter
 
+    @asyncio.coroutine
     def wsgi(self, environ, start_response):
         """ The bottle WSGI-interface. """
+
+        if not self.initialized:
+            print("triggering")
+            yield from self.trigger_hook('before_first_request')
+            self.initialized = True
+
         try:
-            request, response, result = self._handle(environ)
+            request, response, result = yield from self._handle(environ)
             out = self._cast(request, response, result)
             # rfc2616 section 4.3
             if response._status_code in (100, 101, 204, 304)\
@@ -1718,9 +1739,10 @@ class JSONPlugin(object):
     def apply(self, callback, route):
         dumps = self.json_dumps
         if not dumps: return callback
+        @asyncio.coroutine
         def wrapper(*a, **ka):
             try:
-                rv = callback(*a, **ka)
+                rv = yield from call_maybe_yield(callback, *a, **ka)
             except HTTPError:
                 rv = _e()
 
@@ -1728,8 +1750,7 @@ class JSONPlugin(object):
                 #Attempt to serialize, raises exception on failure
                 json_response = dumps(rv)
                 #Set content type only if serialization succesful
-                # fixme
-                # response.content_type = 'application/json'
+                a[1].content_type = 'application/json'
                 return json_response
             elif isinstance(rv, HTTPResponse) and isinstance(rv.body, dict):
                 rv.body = dumps(rv.body)
@@ -2558,6 +2579,17 @@ def auth_basic(request, check, realm="private", text="Access denied"):
         return wrapper
     return decorator
 
+def yields(value):
+    return isinstance(value, asyncio.futures.Future) or inspect.isgenerator(value)
+
+@asyncio.coroutine
+def call_maybe_yield(func, *args, **kwargs):
+    rv = func(*args, **kwargs)
+    if yields(rv):
+        rv = yield from rv
+    return rv
+
+
 
 # Shortcuts for common Bottle methods.
 # They all refer to the current default application.
@@ -2647,6 +2679,17 @@ class WSGIRefServer(ServerAdapter):
 
         srv = make_server(self.host, self.port, app, server_cls, handler_cls)
         srv.serve_forever()
+
+class AioHTTPServer(ServerAdapter):
+    def run(self, app): # pragma: no cover
+
+        """Create a new server instance that is either threaded, or forks
+        or just processes one request after another.
+        """
+
+        loop = asyncio.get_event_loop()
+        asyncio.async(loop.create_server(lambda: WSGIServerHttpProtocol(app, readpayload=True), self.host, self.port))
+        loop.run_forever()
 
 
 # class CherryPyServer(ServerAdapter):
@@ -2851,6 +2894,7 @@ server_names = {
     'cgi': CGIServer,
     # 'flup': FlupFCGIServer,
     'wsgiref': WSGIRefServer,
+    'aiohttp': AioHTTPServer,
     # 'waitress': WaitressServer,
     # 'cherrypy': CherryPyServer,
     # 'paste': PasteServer,
@@ -2913,7 +2957,7 @@ def load_app(target):
         NORUN = nr_old
 
 _debug = debug
-def run(app=None, server='wsgiref', host='127.0.0.1', port=8080,
+def run(app=None, server='aiohttp', host='127.0.0.1', port=8080,
         interval=1, reloader=False, quiet=False, plugins=None,
         debug=None, **kargs):
     """ Start a server instance. This method blocks until the server terminates.
@@ -2922,7 +2966,7 @@ def run(app=None, server='wsgiref', host='127.0.0.1', port=8080,
                :func:`load_app`. (default: :func:`default_app`)
         :param server: Server adapter to use. See :data:`server_names` keys
                for valid names or pass a :class:`ServerAdapter` subclass.
-               (default: `wsgiref`)
+               (default: `aiohttp`)
         :param host: Server address to bind to. Pass ``0.0.0.0`` to listens on
                all interfaces including the external one. (default: 127.0.0.1)
         :param port: Server port to bind to. Values below 1024 require root

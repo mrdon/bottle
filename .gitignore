@@ -8,5 +8,7 @@
 dist/
 build/
 MANIFEST
-bottle.egg-info/
+*.egg-info/
 .htmlcoverage/
+venv
+*.iml

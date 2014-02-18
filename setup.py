@@ -7,21 +7,22 @@ try:
 except ImportError:
     from distutils.core import setup
 
-if sys.version_info < (2,5):
-    raise NotImplementedError("Sorry, you need at least Python 2.5 or Python 3.x to use bottle.")
 
 import bottle
 
-setup(name='bottle',
+setup(name='Bottle-Async',
       version=bottle.__version__,
-      description='Fast and simple WSGI-framework for small web-applications.',
+      description='A fork of Bottle to add support for asyncio.',
       long_description=bottle.__doc__,
-      author=bottle.__author__,
-      author_email='marc@gsites.de',
-      url='http://bottlepy.org/',
+      author="Don Brown, " + bottle.__author__,
+      author_email='mrdon@twdata.org',
+      url='https://github.com/mrdon/bottle',
       py_modules=['bottle'],
       scripts=['bottle.py'],
       license='MIT',
+      install_requires=[
+        'aiohttp>=0.6'
+      ],
       platforms = 'any',
       classifiers=['Development Status :: 4 - Beta',
         'Intended Audience :: Developers',
@@ -33,12 +34,8 @@ setup(name='bottle',
         'Topic :: Internet :: WWW/HTTP :: WSGI :: Middleware',
         'Topic :: Internet :: WWW/HTTP :: WSGI :: Server',
         'Topic :: Software Development :: Libraries :: Application Frameworks',
-        'Programming Language :: Python :: 2.5',
-        'Programming Language :: Python :: 2.6',
-        'Programming Language :: Python :: 2.7',
-        'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.2',
         'Programming Language :: Python :: 3.3',
+        'Programming Language :: Python :: 3.4',
         ],
      )
 
