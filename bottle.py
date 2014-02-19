@@ -2692,6 +2692,12 @@ class WSGIRefServer(ServerAdapter):
 
 class AioHTTPServer(ServerAdapter):
     def run(self, app): # pragma: no cover
+        debug = self.options.get('debug', False)
+        if debug:
+            asyncio.tasks._DEBUG = True
+            aio_log = logging.getLogger("asyncio")
+            aio_log.setLevel(logging.WARN)
+            aio_log.propagate = True
         loop = asyncio.get_event_loop()
         asyncio.async(loop.create_server(lambda: WSGIServerHttpProtocol(app, readpayload=True), self.host, self.port))
 
@@ -3030,6 +3036,7 @@ def run(app=None, server='aiohttp', host='127.0.0.1', port=8080,
         if isinstance(server, basestring):
             server = load(server)
         if isinstance(server, type):
+            kargs['debug'] = debug
             server = server(host=host, port=port, **kargs)
         if not isinstance(server, ServerAdapter):
             raise ValueError("Unknown or unsupported server: %r" % server)
