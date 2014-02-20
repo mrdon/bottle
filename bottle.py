@@ -962,7 +962,6 @@ class Bottle(object):
             try:
                 yield from self.init_lock.acquire()
                 if not self.initialized:
-                    print("triggering")
                     yield from self.trigger_hook('before_first_request')
                     self.initialized = True
                     self.init_lock = None
