@@ -2696,7 +2696,7 @@ class AioHTTPServer(ServerAdapter):
         if debug:
             asyncio.tasks._DEBUG = True
             aio_log = logging.getLogger("asyncio")
-            aio_log.setLevel(logging.WARN)
+            aio_log.setLevel(logging.INFO)
             aio_log.propagate = True
         loop = asyncio.get_event_loop()
         asyncio.async(loop.create_server(lambda: WSGIServerHttpProtocol(app, readpayload=True), self.host, self.port))
