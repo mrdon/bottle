@@ -2587,8 +2587,10 @@ def auth_basic(request, check, realm="private", text="Access denied"):
         return wrapper
     return decorator
 
+
 def yields(value):
-    return isinstance(value, asyncio.futures.Future) or inspect.isgenerator(value)
+    return isinstance(value, asyncio.futures.Future) or inspect.isgenerator(value) or \
+           isinstance(value, asyncio.tasks.CoroWrapper)
 
 @asyncio.coroutine
 def call_maybe_yield(func, *args, **kwargs):
@@ -3512,8 +3514,9 @@ def view(tpl_name, **defaults):
     '''
     def decorator(func):
         @functools.wraps(func)
+        @asyncio.coroutine
         def wrapper(*args, **kwargs):
-            result = func(*args, **kwargs)
+            result = yield from call_maybe_yield(func, *args, **kwargs)
             if isinstance(result, (dict, DictMixin)):
                 tplvars = defaults.copy()
                 tplvars.update(result)
